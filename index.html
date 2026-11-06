@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PepiTV - Televisión Fácil y Directa</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Font Awesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- HLS.js for .m3u8 streaming -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&display=swap');
+    
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background-color: #0b0d14;
+      color: #fffdf8;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* High-visibility golden yellow focus ring for Senior Accessibility */
+    .focusable {
+      transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+      border: 4px solid transparent;
+    }
+
+    .focusable:focus, .focusable.focused {
+      border-color: #ffca28 !important;
+      background-color: rgba(255, 202, 40, 0.15) !important;
+      transform: scale(1.02);
+      box-shadow: 0 0 25px rgba(255, 202, 40, 0.4);
+      outline: none;
+    }
+
+    /* Custom Glassmorphism */
+    .glass-panel {
+      background: rgba(18, 22, 34, 0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* Custom scrollbar for TV */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #ffca28;
+      border-radius: 4px;
+    }
+
+    /* Text contrast shadow */
+    .text-shadow-lg {
+      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+    }
+
+    /* Fade Animation for OSD */
+    .fade-osd {
+      transition: opacity 0.4s ease-in-out, transform 0.4s ease-in-out;
+    }
+  </style>
+</head>
+<body class="h-screen w-screen overflow-hidden relative">
+
+  <!-- 1. FULLSCREEN / BACKGROUND VIDEO PLAYER -->
+  <div id="videoContainer" class="fixed inset-0 w-full h-full bg-black z-0">
+    <video id="videoPlayer" class="w-full h-full object-cover" autoplay preload="auto"></video>
+  </div>
+
+  <!-- 2. LOADING BADGE (Bottom Right - only during background loading) -->
+  <div id="previewLoading" class="hidden fixed bottom-6 right-6 z-20 glass-panel px-6 py-3 rounded-2xl flex items-center space-x-3 border-l-4 border-amber-400 shadow-2xl">
+    <div class="animate-spin text-amber-400 text-xl">
+      <i class="fas fa-circle-notch"></i>
+    </div>
+    <span class="text-amber-100 font-bold text-lg">Cargando canal en directo...</span>
+  </div>
+
+  <!-- 3. OVERLAY UI (Channel List + Info Header + Player HUD) -->
+  <div id="uiOverlay" class="relative z-10 w-full h-full flex flex-col justify-between p-6 pointer-events-none transition-opacity duration-300">
+    
+    <!-- TOP STICKY BANNER (PepiTV Header) -->
+    <header id="topHeader" class="glass-panel rounded-3xl p-4 px-8 flex justify-between items-center pointer-events-auto sticky top-0 shadow-2xl border border-white/10">
+      <div class="flex items-center space-x-4">
+        <div class="w-14 h-14 bg-gradient-to-tr from-amber-500 to-amber-300 rounded-2xl flex items-center justify-center shadow-lg text-slate-950 font-black text-2xl">
+          <i class="fas fa-tv"></i>
+        </div>
+        <div>
+          <h1 class="text-3xl font-extrabold text-white tracking-wide flex items-center gap-3">
+            PepiTV
+            <span class="text-xs bg-amber-400/20 text-amber-300 border border-amber-400/30 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
+              Televisión Fácil
+            </span>
+          </h1>
+          <p class="text-slate-300 text-base font-semibold">TDT España & Sevilla</p>
+        </div>
+      </div>
+
+      <!-- Live Numeric Entry Display Box inside top banner -->
+      <div id="numDialBanner" class="hidden bg-amber-400 text-slate-950 font-black text-3xl px-6 py-2 rounded-2xl animate-pulse shadow-lg flex items-center space-x-2">
+        <span class="text-xs text-slate-900 uppercase font-extrabold tracking-widest mr-1">IR AL CANAL:</span>
+        <span id="numDialText">--</span>
+      </div>
+    </header>
+
+    <!-- MIDDLE SECTION: SCROLLING CHANNEL LIST (Left Floating Menu) -->
+    <main class="flex-1 my-4 flex gap-6 overflow-hidden pointer-events-auto">
+      
+      <!-- Vertical Channel Scroll View -->
+      <div id="channelScrollContainer" class="w-full md:w-3/5 lg:w-1/2 h-full overflow-y-auto pr-3 space-y-3 py-2">
+        <div id="channelList" class="space-y-3">
+          <!-- Channels & App Cards Rendered via JS -->
+        </div>
+      </div>
+
+      <!-- Right Side Selected Channel Info Card -->
+      <div class="flex flex-1 flex-col justify-end pointer-events-none">
+        <div id="currentInfoCard" class="glass-panel p-6 rounded-3xl space-y-4 border border-white/10 shadow-2xl">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+              <span id="infoNumBadge" class="bg-amber-400 text-slate-950 font-black text-2xl px-4 py-2 rounded-xl">
+                #1
+              </span>
+              <!-- Channel Logo Badge -->
+              <div id="infoLogoContainer" class="w-16 h-12 bg-slate-900/80 rounded-xl p-1 flex items-center justify-center border border-white/10">
+                <img id="infoLogoImg" src="" alt="" class="max-h-full max-w-full object-contain">
+              </div>
+              <h2 id="infoTitle" class="text-2xl font-bold text-white">La 1 HD</h2>
+            </div>
+            <span class="flex items-center space-x-2 bg-red-500/20 text-red-400 px-3 py-1 rounded-full text-xs font-bold border border-red-500/30">
+              <span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+              <span>EN DIRECTO</span>
+            </span>
+          </div>
+
+          <div class="border-t border-white/10 pt-3">
+            <p class="text-xs font-bold uppercase text-amber-400 tracking-wider">Emitiendo Ahora:</p>
+            <p id="infoEpgTitle" class="text-xl font-bold text-white mt-1">Telediario 1ª Edición</p>
+            <p id="infoEpgDesc" class="text-sm text-slate-300 mt-1 line-clamp-2">Información de actualidad nacional e internacional en Televisión Española.</p>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- FOOTER NAV HELP BANNER -->
+    <footer class="glass-panel rounded-2xl p-3 px-6 flex justify-between items-center text-slate-300 text-sm font-bold pointer-events-auto">
+      <div class="flex items-center space-x-6">
+        <span class="flex items-center gap-2"><kbd class="bg-amber-400 text-slate-950 px-2 py-1 rounded-md font-black">▲/▼</kbd> Moverse</span>
+        <span class="flex items-center gap-2"><kbd class="bg-amber-400 text-slate-950 px-3 py-1 rounded-md font-black">OK</kbd> Ver a Pantalla Completa</span>
+        <span class="flex items-center gap-2"><kbd class="bg-amber-400 text-slate-950 px-2 py-1 rounded-md font-black">0-9</kbd> Número de Canal</span>
+      </div>
+      <span class="text-amber-400 text-xs uppercase font-extrabold tracking-widest">PepiTV v3.0</span>
+    </footer>
+
+  </div>
+
+  <!-- 4. FULLSCREEN OSD BOTTOM INFO BANNER (Auto-hides after 10 sec) -->
+  <div id="fullScreenOSD" class="fixed inset-x-0 bottom-0 z-30 p-8 pointer-events-none fade-osd opacity-0 translate-y-10">
+    
+    <!-- Top Right Corner Fullscreen Badge -->
+    <div id="topRightNumBadge" class="fixed top-8 right-8 bg-amber-400 text-slate-950 font-black text-3xl px-6 py-3 rounded-2xl shadow-2xl border-2 border-slate-950 flex items-center space-x-2">
+      <i class="fas fa-tv text-2xl"></i>
+      <span id="osdTopNumText">CANAL 1</span>
+    </div>
+
+    <!-- Bottom Fullscreen Banner -->
+    <div class="max-w-5xl mx-auto glass-panel p-6 rounded-3xl border-2 border-amber-400/40 shadow-2xl flex items-center space-x-6">
+      <div id="osdNumBox" class="bg-amber-400 text-slate-950 font-black text-4xl w-20 h-20 rounded-2xl flex items-center justify-center shadow-lg shrink-0">
+        1
+      </div>
+      
+      <div id="osdLogoBox" class="w-24 h-16 bg-slate-950/80 rounded-2xl p-2 flex items-center justify-center border border-white/10 shrink-0">
+        <img id="osdLogoImg" src="" alt="" class="max-h-full max-w-full object-contain">
+      </div>
+
+      <div class="flex-1 overflow-hidden">
+        <div class="flex items-center space-x-3">
+          <h3 id="osdChannelName" class="text-3xl font-extrabold text-white truncate">La 1 HD</h3>
+          <span class="bg-red-600 text-white font-bold text-xs px-2.5 py-0.5 rounded-full uppercase tracking-wider">DIRECTO</span>
+        </div>
+        <p id="osdProgramTitle" class="text-xl font-bold text-amber-300 mt-1 truncate">Cargando programa...</p>
+        <p id="osdProgramDesc" class="text-sm text-slate-300 truncate mt-0.5">Televisión Digital Terrestre</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- JAVASCRIPT APP LOGIC -->
+  <script>
+    // -------------------------------------------------------------
+    // DATA: TDT SPANISH CHANNELS & INSTALLED STREAMING APPS
+    // -------------------------------------------------------------
+    const CHANNELS_DATA = [
+      { id: 1, name: "La 1 HD", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/La_1_HD_2024.svg/200px-La_1_HD_2024.svg.png", url: "https://rtvelivestream.akamaized.net/la1_main.m3u8", epgId: "La 1", category: "Nacional", isRadio: false },
+      { id: 2, name: "La 2 HD", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/La_2_HD_2024.svg/200px-La_2_HD_2024.svg.png", url: "https://rtvelivestream.akamaized.net/la2_main.m3u8", epgId: "La 2", category: "Nacional", isRadio: false },
+      { id: 3, name: "Antena 3", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Antena3_2017.svg/200px-Antena3_2017.svg.png", url: "https://atres-live.hls.adaptive.level3.net/atv/a3/master.m3u8", epgId: "Antena 3", category: "Nacional", isRadio: false },
+      { id: 4, name: "Canal Sur (Andalucía)", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/94/Canal_Sur_Tele-vision_Logo.svg/200px-Canal_Sur_Tele-vision_Logo.svg.png", url: "https://cdn.canalsur.es/live/canalsur/playlist.m3u8", epgId: "Canal Sur", category: "Andalucía", isRadio: false },
+      { id: 5, name: "Telecinco", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/7/79/Telecinco_2008.svg/200px-Telecinco_2008.svg.png", url: "https://live-telecinco.mediaset.es/hls/live/2034032/telecinco/master.m3u8", epgId: "Telecinco", category: "Nacional", isRadio: false },
+      { id: 6, name: "laSexta", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/LaSexta_2016.svg/200px-LaSexta_2016.svg.png", url: "https://atres-live.hls.adaptive.level3.net/atv/lasexta/master.m3u8", epgId: "laSexta", category: "Nacional", isRadio: false },
+      { id: 7, name: "Cuatro", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c8/Cuatro_2005.svg/200px-Cuatro_2005.svg.png", url: "https://live-cuatro.mediaset.es/hls/live/2034033/cuatro/master.m3u8", epgId: "Cuatro", category: "Nacional", isRadio: false },
+      { id: 8, name: "24h Noticias", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Canal_24_horas_2024.svg/200px-Canal_24_horas_2024.svg.png", url: "https://rtvelivestream.akamaized.net/24h_main.m3u8", epgId: "24h", category: "Noticias", isRadio: false },
+      { id: 9, name: "Teledeporte", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Teledeporte_2024.svg/200px-Teledeporte_2024.svg.png", url: "https://rtvelivestream.akamaized.net/tdp_main.m3u8", epgId: "Teledeporte", category: "Deportes", isRadio: false },
+      { id: 10, name: "Clan TV", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/92/Clan_2024.svg/200px-Clan_2024.svg.png", url: "https://rtvelivestream.akamaized.net/clan_main.m3u8", epgId: "Clan", category: "Infantil", isRadio: false },
+      { id: 11, name: "7TV Sevilla", logo: "https://7tvandalucia.es/assets/img/logo-7tv.png", url: "https://live.7tvandalucia.es/sevilla/live.m3u8", epgId: "7TV Sevilla", category: "Sevilla", isRadio: false },
+      { id: 12, name: "101TV Sevilla", logo: "https://101tvsevilla.es/wp-content/uploads/2022/01/101TV-Sevilla.png", url: "https://live.101tvsevilla.es/hls/stream.m3u8", epgId: "101TV Sevilla", category: "Sevilla", isRadio: false },
+      { id: 13, name: "Andalucía TV", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/94/Canal_Sur_Tele-vision_Logo.svg/200px-Canal_Sur_Tele-vision_Logo.svg.png", url: "https://cdn.canalsur.es/live/atv/playlist.m3u8", epgId: "Andalucía TV", category: "Andalucía", isRadio: false },
+      { id: 14, name: "Trece", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b5/Trece_logo.svg/200px-Trece_logo.svg.png", url: "https://trece.emisionendirecto.com/hls/trece.m3u8", epgId: "Trece", category: "Nacional", isRadio: false },
+      { id: 15, name: "DKISS", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/DKISS_logo.svg/200px-DKISS_logo.svg.png", url: "https://dkiss.emisionendirecto.com/hls/dkiss.m3u8", epgId: "DKISS", category: "Entretenimiento", isRadio: false },
+      { id: 16, name: "DMAX", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/DMAX_logo.svg/200px-DMAX_logo.svg.png", url: "https://dmax.emisionendirecto.com/hls/dmax.m3u8", epgId: "DMAX", category: "Entretenimiento", isRadio: false },
+      { id: 17, name: "BeMad HD", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/7/75/BeMad_2016.svg/200px-BeMad_2016.svg.png", url: "https://live-bemad.mediaset.es/hls/live/2034034/bemad/master.m3u8", epgId: "BeMad", category: "Cine", isRadio: false },
+      { id: 18, name: "Neox", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/Neox_2014.svg/200px-Neox_2014.svg.png", url: "https://atres-live.hls.adaptive.level3.net/atv/neox/master.m3u8", epgId: "Neox", category: "Entretenimiento", isRadio: false },
+      { id: 19, name: "Nova", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/Nova_2014.svg/200px-Nova_2014.svg.png", url: "https://atres-live.hls.adaptive.level3.net/atv/nova/master.m3u8", epgId: "Nova", category: "Series", isRadio: false },
+      { id: 20, name: "Mega", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/Mega_2015.svg/200px-Mega_2015.svg.png", url: "https://atres-live.hls.adaptive.level3.net/atv/mega/master.m3u8", epgId: "Mega", category: "Deportes", isRadio: false },
+      { id: 21, name: "FDF", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Factor%C3%ADaDeFicci%C3%B3n_2019.svg/200px-Factor%C3%ADaDeFicci%C3%B3n_2019.svg.png", url: "https://live-fdf.mediaset.es/hls/live/2034035/fdf/master.m3u8", epgId: "FDF", category: "Series", isRadio: false },
+      { id: 22, name: "Divinity", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8d/Divinity_2012.svg/200px-Divinity_2012.svg.png", url: "https://live-divinity.mediaset.es/hls/live/2034036/divinity/master.m3u8", epgId: "Divinity", category: "Series", isRadio: false },
+      { id: 23, name: "Energy", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Energy_2015.svg/200px-Energy_2015.svg.png", url: "https://live-energy.mediaset.es/hls/live/2034037/energy/master.m3u8", epgId: "Energy", category: "Series", isRadio: false },
+      { id: 24, name: "Boing", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Boing_2016.svg/200px-Boing_2016.svg.png", url: "https://live-boing.mediaset.es/hls/live/2034038/boing/master.m3u8", epgId: "Boing", category: "Infantil", isRadio: false },
+      { id: 25, name: "Paramount", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/Paramount_Network_2018.svg/200px-Paramount_Network_2018.svg.png", url: "https://paramount.emisionendirecto.com/hls/paramount.m3u8", epgId: "Paramount", category: "Cine", isRadio: false },
+      
+      // Radio Stations (Sevilla & Generalist / Musical)
+      { id: 26, name: "Canal Sur Radio", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/94/Canal_Sur_Tele-vision_Logo.svg/200px-Canal_Sur_Tele-vision_Logo.svg.png", url: "https://cdn.canalsur.es/live/canalsurradio/playlist.m3u8", epgId: "Canal Sur Radio", category: "Radio Sevilla", isRadio: true },
+      { id: 27, name: "Cadena SER", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Cadena_SER_logo.svg/200px-Cadena_SER_logo.svg.png", url: "https://live.cadenaser.com/sevilla.mp3", epgId: "Cadena SER", category: "Radio Generalista", isRadio: true },
+      { id: 28, name: "COPE", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/COPE_logo.svg/200px-COPE_logo.svg.png", url: "https://cope-sevilla.flumotion.com/playlist.m3u8", epgId: "COPE", category: "Radio Generalista", isRadio: true },
+      { id: 29, name: "Onda Cero", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Onda_Cero_logo.svg/200px-Onda_Cero_logo.svg.png", url: "https://live-ondacero.flumotion.com/ondacero/sevilla.mp3", epgId: "Onda Cero", category: "Radio Generalista", isRadio: true },
+      { id: 30, name: "RNE Radio 1", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Radio_Nacional_2024.svg/200px-Radio_Nacional_2024.svg.png", url: "https://rtvelivestream.akamaized.net/rne_r1_main.m3u8", epgId: "RNE 1", category: "Radio Generalista", isRadio: true },
+      { id: 31, name: "Radio Olé", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0e/Radio_Ol%C3%A9_logo.svg/200px-Radio_Ol%C3%A9_logo.svg.png", url: "https://live.radioole.com/radioole.mp3", epgId: "Radio Olé", category: "Radio Música", isRadio: true },
+      { id: 32, name: "LOS40", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/LOS40_logo.svg/200px-LOS40_logo.svg.png", url: "https://live.los40.com/los40.mp3", epgId: "LOS40", category: "Radio Música", isRadio: true },
+      { id: 33, name: "Cadena Dial", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Cadena_Dial_logo.svg/200px-Cadena_Dial_logo.svg.png", url: "https://live.cadenadial.com/cadenadial.mp3", epgId: "Cadena Dial", category: "Radio Música", isRadio: true },
+      { id: 34, name: "Kiss FM", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Kiss_FM_logo.svg/200px-Kiss_FM_logo.svg.png", url: "https://kissfm.emisionendirecto.com/kissfm.mp3", epgId: "Kiss FM", category: "Radio Música", isRadio: true },
+      { id: 35, name: "Rock FM", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Rock_FM_logo.svg/200px-Rock_FM_logo.svg.png", url: "https://rockfm.emisionendirecto.com/rockfm.mp3", epgId: "Rock FM", category: "Radio Música", isRadio: true },
+      { id: 36, name: "Europa FM", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2a/Europa_FM_logo.svg/200px-Europa_FM_logo.svg.png", url: "https://live-europafm.flumotion.com/europafm/stream.mp3", epgId: "Europa FM", category: "Radio Música", isRadio: true },
+      { id: 37, name: "Megastar FM", logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/b/be/MegaStar_FM_logo.svg/200px-MegaStar_FM_logo.svg.png", url: "https://megastar.emisionendirecto.com/megastar.mp3", epgId: "Megastar FM", category: "Radio Música", isRadio: true }
+    ];
+
+    const INSTALLED_APPS = [
+      { id: "app-netflix", name: "Netflix", appId: "netflix", icon: "https://upload.wikimedia.org/wikipedia/commons/0/08/Netflix_2015_N_logo.svg", bg: "bg-red-950/80 border-red-500/40" },
+      { id: "app-hbo", name: "HBO Max", appId: "hbo", icon: "https://upload.wikimedia.org/wikipedia/commons/1/17/HBO_Max_Logo.svg", bg: "bg-purple-950/80 border-purple-500/40" },
+      { id: "app-prime", name: "Prime Video", appId: "amazon", icon: "https://upload.wikimedia.org/wikipedia/commons/d/de/Amazon_Prime_Video_logo.svg", bg: "bg-blue-950/80 border-blue-500/40" },
+      { id: "app-disney", name: "Disney+", appId: "disney", icon: "https://upload.wikimedia.org/wikipedia/commons/3/3e/Disney%2B_logo.svg", bg: "bg-indigo-950/80 border-indigo-500/40" },
+      { id: "app-youtube", name: "YouTube", appId: "youtube.leanback.v4", icon: "https://upload.wikimedia.org/wikipedia/commons/0/09/YouTube_full-color_icon_%282017%29.svg", bg: "bg-red-900/80 border-red-600/40" }
+    ];
+
+    // -------------------------------------------------------------
+    // GLOBAL STATE VARIABLES
+    // -------------------------------------------------------------
+    let currentChannelIndex = 0;
+    let isFullScreen = false;
+    let hls = null;
+    let osdHidingTimeout = null;
+    
+    // Numeric Dial Input State
+    let numDialBuffer = "";
+    let numDialTimeout = null;
+
+    // DOM Element References
+    const videoPlayer = document.getElementById('videoPlayer');
+    const previewLoading = document.getElementById('previewLoading');
+    const uiOverlay = document.getElementById('uiOverlay');
+    const channelList = document.getElementById('channelList');
+    const topHeader = document.getElementById('topHeader');
+    const numDialBanner = document.getElementById('numDialBanner');
+    const numDialText = document.getElementById('numDialText');
+
+    // Info Card DOMs
+    const infoNumBadge = document.getElementById('infoNumBadge');
+    const infoLogoImg = document.getElementById('infoLogoImg');
+    const infoTitle = document.getElementById('infoTitle');
+    const infoEpgTitle = document.getElementById('infoEpgTitle');
+    const infoEpgDesc = document.getElementById('infoEpgDesc');
+
+    // Fullscreen OSD DOMs
+    const fullScreenOSD = document.getElementById('fullScreenOSD');
+    const osdNumBox = document.getElementById('osdNumBox');
+    const osdLogoImg = document.getElementById('osdLogoImg');
+    const osdChannelName = document.getElementById('osdChannelName');
+    const osdProgramTitle = document.getElementById('osdProgramTitle');
+    const osdProgramDesc = document.getElementById('osdProgramDesc');
+    const osdTopNumText = document.getElementById('osdTopNumText');
+
+    // -------------------------------------------------------------
+    // INITIALIZATION
+    // -------------------------------------------------------------
+    window.onload = () => {
+      renderChannels();
+      setupKeyListeners();
+      
+      // Auto focus on Channel 1 on load
+      setTimeout(() => {
+        const firstCard = document.querySelector('.focusable[data-index="0"]');
+        if (firstCard) firstCard.focus();
+        loadChannelStream(0);
+      }, 300);
+    };
+
+    // -------------------------------------------------------------
+    // RENDER CHANNELS & APPS
+    // -------------------------------------------------------------
+    function renderChannels() {
+      let html = '';
+
+      // Render TDT Channels & Radios in unified list
+      CHANNELS_DATA.forEach((ch, idx) => {
+        const isRadioBadge = ch.isRadio ? `<span class="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-md font-bold uppercase ml-2"><i class="fas fa-radio"></i> Radio</span>` : '';
+        const numberBgClass = ch.isRadio ? 'bg-emerald-400 text-slate-950' : 'bg-amber-400 text-slate-950';
+        const actionText = ch.isRadio ? 'PULSA OK PARA ESCUCHAR' : 'PULSA OK PARA VER';
+        
+        // Add Section Header before first radio station
+        if (ch.id === 26) {
+          html += `
+            <div class="pt-6 pb-2">
+              <h2 class="text-base font-extrabold uppercase tracking-widest text-emerald-400 flex items-center gap-2">
+                <i class="fas fa-radio"></i> Emisoras de Radio
+              </h2>
+            </div>
+          `;
+        }
+
+        html += `
+          <div class="channel-card focusable glass-panel p-4 rounded-2xl flex items-center justify-between cursor-pointer"
+               tabindex="0"
+               data-type="channel"
+               data-index="${idx}"
+               onfocus="onChannelFocus(${idx})"
+               onclick="onChannelClick(${idx})">
+            
+            <div class="flex items-center space-x-4">
+              <div class="w-12 h-12 ${numberBgClass} font-black text-2xl rounded-xl flex items-center justify-center shadow-lg shrink-0">
+                ${ch.id}
+              </div>
+              
+              <div class="w-16 h-12 bg-slate-900/80 rounded-xl p-1.5 flex items-center justify-center border border-white/10 shrink-0">
+                <img src="${ch.logo}" alt="${ch.name}" class="max-h-full max-w-full object-contain" onError="this.onerror=null; this.src='https://placehold.co/100x60/1e293b/ffca28?text=${encodeURIComponent(ch.name)}'">
+              </div>
+
+              <div>
+                <h3 class="text-xl font-bold text-white tracking-wide flex items-center">${ch.name} ${isRadioBadge}</h3>
+                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">${ch.category}</span>
+              </div>
+            </div>
+
+            <div class="flex items-center space-x-2 text-slate-400">
+              <span class="text-xs font-bold ${ch.isRadio ? 'text-emerald-400' : 'text-amber-400'}">${actionText}</span>
+              <i class="fas fa-chevron-right text-sm ${ch.isRadio ? 'text-emerald-400' : 'text-amber-400'}"></i>
+            </div>
+          </div>
+        `;
+      });
+
+      // Render Installed Streaming Apps Section Header
+      html += `
+        <div class="pt-6 pb-2">
+          <h2 class="text-base font-extrabold uppercase tracking-widest text-amber-400 flex items-center gap-2">
+            <i class="fas fa-cubes"></i> Aplicaciones Instaladas
+          </h2>
+        </div>
+      `;
+
+      // Render Apps
+      INSTALLED_APPS.forEach((app, idx) => {
+        const appGlobalIndex = CHANNELS_DATA.length + idx;
+        html += `
+          <div class="channel-card focusable glass-panel ${app.bg} p-4 rounded-2xl flex items-center justify-between cursor-pointer"
+               tabindex="0"
+               data-type="app"
+               data-app-id="${app.appId}"
+               data-index="${appGlobalIndex}"
+               onfocus="onAppFocus('${app.name}', '${app.icon}')"
+               onclick="launchApp('${app.appId}', '${app.name}')">
+            
+            <div class="flex items-center space-x-4">
+              <div class="w-16 h-12 bg-slate-950/80 rounded-xl p-2 flex items-center justify-center border border-white/20 shrink-0 shadow-lg">
+                <img src="${app.icon}" alt="${app.name}" class="max-h-full max-w-full object-contain">
+              </div>
+
+              <div>
+                <h3 class="text-xl font-extrabold text-white tracking-wide">${app.name}</h3>
+                <span class="text-xs font-semibold text-slate-300">Aplicación oficial de Smart TV</span>
+              </div>
+            </div>
+
+            <div class="flex items-center space-x-2 text-amber-400">
+              <span class="text-xs font-bold">ABRIR</span>
+              <i class="fas fa-external-link-alt text-sm"></i>
+            </div>
+          </div>
+        `;
+      });
+
+      channelList.innerHTML = html;
+    }
+
+    // -------------------------------------------------------------
+    // CHANNEL & PREVIEW STREAMING LOGIC
+    // -------------------------------------------------------------
+    function onChannelFocus(idx) {
+      currentChannelIndex = idx;
+      updateRightInfoCard(CHANNELS_DATA[idx]);
+      loadChannelStream(idx);
+    }
+
+    function onAppFocus(appName, appIcon) {
+      infoNumBadge.textContent = "APP";
+      infoLogoImg.src = appIcon;
+      infoTitle.textContent = appName;
+      infoEpgTitle.textContent = `Abrir ${appName}`;
+      infoEpgDesc.textContent = `Pulse el botón OK para lanzar la aplicación oficial de ${appName} en la televisión.`;
+    }
+
+    function loadChannelStream(idx) {
+      const channel = CHANNELS_DATA[idx];
+      if (!channel) return;
+
+      previewLoading.classList.remove('hidden');
+
+      // Safely cleanup existing HLS player
+      if (hls) {
+        try {
+          hls.destroy();
+        } catch(e) {}
+        hls = null;
+      }
+
+      videoPlayer.pause();
+      videoPlayer.removeAttribute('src');
+      videoPlayer.load();
+
+      if (Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+        hls.loadSource(channel.url);
+        hls.attachMedia(videoPlayer);
+        
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          videoPlayer.play().catch(() => {});
+          previewLoading.classList.add('hidden');
+        });
+
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            previewLoading.classList.add('hidden');
+          }
+        });
+      } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
+        videoPlayer.src = channel.url;
+        videoPlayer.play().catch(() => {});
+        previewLoading.classList.add('hidden');
+      }
+    }
+
+    // -------------------------------------------------------------
+    // FULLSCREEN & NAVIGATION LOGIC
+    // -------------------------------------------------------------
+    function onChannelClick(idx) {
+      currentChannelIndex = idx;
+      enterFullScreen();
+    }
+
+    function enterFullScreen() {
+      isFullScreen = true;
+      uiOverlay.classList.add('opacity-0', 'pointer-events-none');
+      topHeader.classList.add('hidden');
+      showOSDBanner();
+    }
+
+    function exitFullScreen() {
+      isFullScreen = false;
+      uiOverlay.classList.remove('opacity-0', 'pointer-events-none');
+      topHeader.classList.remove('hidden');
+      hideOSDBanner();
+
+      // Refocus active channel in list
+      const focusedCard = document.querySelector(`.focusable[data-index="${currentChannelIndex}"]`);
+      if (focusedCard) {
+        focusedCard.focus();
+        focusedCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
+    function nextChannel() {
+      // Loop channels infinitely (skipping apps in fullscreen mode)
+      currentChannelIndex = (currentChannelIndex + 1) % CHANNELS_DATA.length;
+      loadChannelStream(currentChannelIndex);
+      showOSDBanner();
+    }
+
+    function prevChannel() {
+      // Loop channels infinitely
+      currentChannelIndex = (currentChannelIndex - 1 + CHANNELS_DATA.length) % CHANNELS_DATA.length;
+      loadChannelStream(currentChannelIndex);
+      showOSDBanner();
+    }
+
+    // -------------------------------------------------------------
+    // FULLSCREEN OSD (10 SEC TIMER)
+    // -------------------------------------------------------------
+    function showOSDBanner() {
+      const channel = CHANNELS_DATA[currentChannelIndex];
+      if (!channel) return;
+
+      osdNumBox.textContent = channel.id;
+      osdLogoImg.src = channel.logo;
+      osdChannelName.textContent = channel.name;
+      osdProgramTitle.textContent = `Emisión en directo`;
+      osdProgramDesc.textContent = `TDT ${channel.category} - Señal Digital`;
+      osdTopNumText.textContent = `CANAL ${channel.id}`;
+
+      fullScreenOSD.classList.remove('opacity-0', 'translate-y-10');
+      fullScreenOSD.classList.add('opacity-100', 'translate-y-0');
+
+      if (osdHidingTimeout) clearTimeout(osdHidingTimeout);
+      osdHidingTimeout = setTimeout(() => {
+        hideOSDBanner();
+      }, 10000); // 10 seconds display
+    }
+
+    function hideOSDBanner() {
+      fullScreenOSD.classList.remove('opacity-100', 'translate-y-0');
+      fullScreenOSD.classList.add('opacity-0', 'translate-y-10');
+    }
+
+    function updateRightInfoCard(channel) {
+      infoNumBadge.textContent = `#${channel.id}`;
+      infoLogoImg.src = channel.logo;
+      infoTitle.textContent = channel.name;
+      infoEpgTitle.textContent = `Emisión en Directo (${channel.category})`;
+      infoEpgDesc.textContent = `Disfrutando de la señal digital abierta de ${channel.name}.`;
+    }
+
+    // -------------------------------------------------------------
+    // LAUNCH INSTALLED WEBOAPPS (NETFLIX, HBO, YOUTUBE, ETC.)
+    // -------------------------------------------------------------
+    function launchApp(appId, appName) {
+      if (window.webOSSystem && window.webOSSystem.launch) {
+        window.webOSSystem.launch({ id: appId });
+      } else if (window.webOS && window.webOS.service) {
+        window.webOS.service.request("luna://com.webos.applicationManager", {
+          method: "launch",
+          parameters: { id: appId }
+        });
+      } else {
+        alert(`Abriendo ${appName}... (En tu Smart TV LG se iniciará la app oficial de ${appName})`);
+      }
+    }
+
+    // -------------------------------------------------------------
+    // NUMERIC KEYPAD DIAL INPUT (WITH 5-SEC MARGIN FOR SENIORS)
+    // -------------------------------------------------------------
+    function handleNumericInput(numChar) {
+      numDialBuffer += numChar;
+      numDialText.textContent = numDialBuffer;
+      numDialBanner.classList.remove('hidden');
+
+      if (numDialTimeout) clearTimeout(numDialTimeout);
+
+      // If user typed 2 digits (e.g. 1 and 2 = 12), trigger INSTANTLY!
+      if (numDialBuffer.length >= 2) {
+        executeNumericJump();
+        return;
+      }
+
+      // Otherwise wait 5 seconds for a second digit entry
+      numDialTimeout = setTimeout(() => {
+        executeNumericJump();
+      }, 5000);
+    }
+
+    function executeNumericJump() {
+      const targetChannelNum = parseInt(numDialBuffer, 10);
+      numDialBuffer = "";
+      numDialBanner.classList.add('hidden');
+
+      const foundIdx = CHANNELS_DATA.findIndex(c => c.id === targetChannelNum);
+      if (foundIdx !== -1) {
+        currentChannelIndex = foundIdx;
+        loadChannelStream(foundIdx);
+
+        if (isFullScreen) {
+          showOSDBanner();
+        } else {
+          const targetCard = document.querySelector(`.focusable[data-index="${foundIdx}"]`);
+          if (targetCard) {
+            targetCard.focus();
+            targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      }
+    }
+
+    // -------------------------------------------------------------
+    // REMOTE CONTROL D-PAD KEY LISTENERS
+    // -------------------------------------------------------------
+    function setupKeyListeners() {
+      document.addEventListener('keydown', (e) => {
+        const key = e.key;
+        const keyCode = e.keyCode;
+
+        // Numeric Keys (0-9)
+        if (key >= '0' && key <= '9') {
+          handleNumericInput(key);
+          return;
+        }
+
+        // Handle Fullscreen mode navigation
+        if (isFullScreen) {
+          if (key === 'ArrowUp' || keyCode === 427 || keyCode === 33) { // CH+
+            nextChannel();
+          } else if (key === 'ArrowDown' || keyCode === 428 || keyCode === 34) { // CH-
+            prevChannel();
+          } else if (key === 'Escape' || key === 'Back' || keyCode === 461 || key === 'Backspace') {
+            exitFullScreen();
+          } else if (key === 'Enter' || keyCode === 13) {
+            showOSDBanner();
+          }
+          return;
+        }
+
+        // Handle Channel List Navigation (Menu Mode)
+        const activeElement = document.activeElement;
+
+        if (key === 'Escape' || key === 'Back' || keyCode === 461) {
+          // Prevent app close on webOS
+          e.preventDefault();
+        }
+
+        if (key === 'ArrowDown') {
+          e.preventDefault();
+          const focusables = Array.from(document.querySelectorAll('.focusable'));
+          const currentIdx = focusables.indexOf(activeElement);
+          if (currentIdx !== -1 && currentIdx < focusables.length - 1) {
+            const next = focusables[currentIdx + 1];
+            next.focus();
+            next.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        } else if (key === 'ArrowUp') {
+          e.preventDefault();
+          const focusables = Array.from(document.querySelectorAll('.focusable'));
+          const currentIdx = focusables.indexOf(activeElement);
+          if (currentIdx > 0) {
+            const prev = focusables[currentIdx - 1];
+            prev.focus();
+            prev.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>
